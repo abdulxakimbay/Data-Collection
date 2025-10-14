@@ -145,10 +145,10 @@ async def telegram_click(data: MessengerClick, request: Request):
     click_id = make_click_id()
     logger.info("telegram_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
-    values = _build_common_values(click_id, "click_telegram", data, ip, city, ua, ref)
+    values = _build_common_values(click_id, "telegram_click", data, ip, city, ua, ref)
     success, result = append_row_to_sheets(values)
     if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": data.event})
+        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "telegram_click"})
     else:
         logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
 
@@ -158,8 +158,9 @@ async def telegram_click(data: MessengerClick, request: Request):
         return JSONResponse(status_code=500, content={"ok": False, "error": "TELEGRAM_BOT_USERNAME not set"})
 
     deeplink = f"https://t.me/{BOT_USERNAME}?start={click_id}"
-    logger.info("redirect_telegram", extra={"click_id": click_id, "deeplink": deeplink})
-    return RedirectResponse(url=deeplink, status_code=302)
+    logger.info("telegram_link_built", extra={"click_id": click_id, "deeplink": deeplink})
+
+    return {"ok": True, "redirect_url": deeplink}
 
 
 # ========== 2) WhatsApp click endpoint (return wa.me link with prefilled text) ==========
@@ -176,10 +177,10 @@ async def whatsapp_click(data: MessengerClick, request: Request):
     click_id = make_click_id()
     logger.info("whatsapp_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
-    values = _build_common_values(click_id, "click_whatsapp", data, ip, city, ua, ref)
+    values = _build_common_values(click_id, "whatsapp_click", data, ip, city, ua, ref)
     success, result = append_row_to_sheets(values)
     if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": data.event})
+        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "whatsapp_click"})
     else:
         logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
 
@@ -190,11 +191,11 @@ async def whatsapp_click(data: MessengerClick, request: Request):
 
     PREFILL = quote(os.getenv("WHATSAPP_PREFILL_TEXT"))
     prefilled_text = f"{PREFILL}{click_id}"
-    # Кодирование — клиент должен использовать encodeURIComponent; здесь просто construct
+
     wa_link = f"https://wa.me/{WHATSAPP_NUMBER}?text={prefilled_text}"
 
     logger.info("whatsapp_link_built", extra={"click_id": click_id, "wa_link": wa_link})
-    return {"ok": True, "click_id": click_id, "wa_link": wa_link}
+    return {"ok": True, "wa_link": wa_link}
 
 
 # ========== 3) Form submit endpoint ==========
@@ -209,12 +210,12 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
     ref = request.headers.get("referer", "")
 
     click_id = make_click_id()
-    logger.info("form_submit", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip, "name": data.form.name if data.form else None})
+    logger.info("form_submit", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip, "form_name": data.form.name if data.form else None})
 
     values = _build_common_values(click_id, "form_submit", data, ip, city, ua, ref)
     success, result = append_row_to_sheets(values)
     if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": data.event})
+        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "form_submit"})
     else:
         logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
 
@@ -225,7 +226,7 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
             page_city=data.page_city or "",
         )
         background_tasks.add_task(send_to_planfix, payload)
-        logger.info("planfix_enqueued", extra={"click_id": click_id, "name": data.form.name})
+        logger.info("planfix_enqueued", extra={"click_id": click_id, "form_name": data.form.name})
 
     return {"ok": success}
 

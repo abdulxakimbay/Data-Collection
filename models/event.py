@@ -15,7 +15,6 @@ class ClientInfo(BaseModel):
 class FormData(BaseModel):
     name: str
     phone: str
-    comment: Optional[str] = ""
 
 # ─── Событие клика по Telegram или WhatsApp ───
 class MessengerClick(BaseModel):

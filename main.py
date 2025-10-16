@@ -13,17 +13,18 @@ logger = logging.getLogger(__name__)
 import os
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from datetime import datetime
-import uuid
 import re
 import geoip2.database
 from urllib.parse import quote
 from typing import Union
+from zoneinfo import ZoneInfo
 
 from models.event import MessengerClick, FormSubmit, BotContact
 from services.sheets import append_row_to_sheets, update_messenger_by_id
 from services.planfix import build_planfix_payload, send_to_planfix
+from services.redis_client import init_redis, get_next_click_id
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
 app = FastAPI(title="Data Collection API")
@@ -32,12 +33,14 @@ app = FastAPI(title="Data Collection API")
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origins],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Redis init (до GeoIP/эндпоинтов, чтобы сразу быть готовыми)
+init_redis(logger=logger)
 
 # GeoIP
 geoip_reader = None
@@ -67,23 +70,18 @@ def health_check():
     logger.debug("health_check")
     return {"status": "ok"}
 
-
-def make_click_id() -> str:
-    return uuid.uuid4().hex[:12]
-
-
-# Вытаскивает click_id из текста: ищет hex-последовательность 8-12 символов
-CLICK_ID_RE = re.compile(r'\b([0-9a-fA-F]{8,12})\b')
-
+# ========== Поиск click_id в тексте (теперь — integer) ==========
+# Ищем целое число длиной >= 4 символов (наш ID начиная с 1000),
+# Берём ПОСЛЕДНЕЕ совпадение в строке — мы добавляем ID в конец prefill.
+INT_CLICK_ID_RE = re.compile(r'\b(\d{4,7})\b')
 
 def extract_click_id_from_text(text: str) -> str | None:
     if not text:
         return None
-    m = CLICK_ID_RE.search(text)
-    if m:
-        return m.group(1).lower()
-    return None
-
+    ids = INT_CLICK_ID_RE.findall(text)
+    if not ids:
+        return None
+    return ids[-1]
 
 def _build_common_values(
     click_id: str,
@@ -96,8 +94,7 @@ def _build_common_values(
     """
     Универсальная сборка строки данных для Google Sheets.
     """
-    timestamp = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-
+    timestamp = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
     # Безопасное извлечение полей
     page_city = getattr(data, "page_city", "") or ""
     utm = getattr(data, "utm", None)
@@ -138,7 +135,7 @@ def append_row_bg(values: list, click_id: str, event: str):
             logger.info("sheets_append_ok (bg)", extra={"click_id": click_id, "event": event})
         else:
             logger.error("sheets_append_fail (bg)", extra={"click_id": click_id, "event": event, "error": str(result)})
-    except Exception as e:
+    except Exception:
         logger.exception("sheets_append_exception (bg)", extra={"click_id": click_id, "event": event})
 
 
@@ -152,7 +149,8 @@ async def telegram_click(data: MessengerClick, request: Request, background_task
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
 
-    click_id = make_click_id()
+    # Генерируем атомарный integer ID (строкой)
+    click_id = get_next_click_id()  # мягкий фолбэк на UUID, если Redis недоступен
     logger.info("telegram_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
     values = _build_common_values(click_id, "telegram_click", data, ip, city, ua)
@@ -179,7 +177,7 @@ async def whatsapp_click(data: MessengerClick, request: Request, background_task
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
 
-    click_id = make_click_id()
+    click_id = get_next_click_id()
     logger.info("whatsapp_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
     values = _build_common_values(click_id, "whatsapp_click", data, ip, city, ua)
@@ -190,7 +188,7 @@ async def whatsapp_click(data: MessengerClick, request: Request, background_task
         logger.error("whatsapp_number_missing")
         return JSONResponse(status_code=500, content={"ok": False, "error": "WHATSAPP_NUMBER not set"})
 
-    PREFILL = quote(os.getenv("WHATSAPP_PREFILL_TEXT"))
+    PREFILL = quote(os.getenv("WHATSAPP_PREFILL_TEXT", ""))
     prefilled_text = f"{PREFILL}{click_id}"
 
     wa_link = f"https://wa.me/{WHATSAPP_NUMBER}?text={prefilled_text}"
@@ -209,8 +207,16 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
 
-    click_id = make_click_id()
-    logger.info("form_submit", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip, "form_name": data.form.name if data.form else None})
+    click_id = get_next_click_id()
+    logger.info(
+        "form_submit",
+        extra={
+            "click_id": click_id,
+            "page_city": data.page_city,
+            "ip": ip,
+            "form_name": data.form.name if data.form else None
+        }
+    )
 
     values = _build_common_values(click_id, "form_submit", data, ip, city, ua)
     background_tasks.add_task(append_row_bg, values, click_id, "form_submit")
@@ -252,7 +258,7 @@ async def bot_telegram(body: BotContact):
 # ========== 5) Endpoint для Planfix, который присылает текст с ?text=... ==========
 @app.post("/bot/whatsapp")
 async def bot_whatsapp(body: BotContact):
-    # ожидаем текст пользователя, где есть click_id.
+    # ожидаем текст пользователя, где есть click_id (целое число длиной >=4)
     text = (body.msg or "").strip()
     if not text:
         logger.warning("bot_whatsapp_empty_payload", extra={"body": body.dict()})

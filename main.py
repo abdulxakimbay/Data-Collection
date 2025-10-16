@@ -131,9 +131,20 @@ def _build_common_values(
     return values
 
 
+def append_row_bg(values: list, click_id: str, event: str):
+    try:
+        success, result = append_row_to_sheets(values)
+        if success:
+            logger.info("sheets_append_ok (bg)", extra={"click_id": click_id, "event": event})
+        else:
+            logger.error("sheets_append_fail (bg)", extra={"click_id": click_id, "event": event, "error": str(result)})
+    except Exception as e:
+        logger.exception("sheets_append_exception (bg)", extra={"click_id": click_id, "event": event})
+
+
 # ========== 1) Telegram click endpoint (redirect) ==========
 @app.post("/events/telegram_click")
-async def telegram_click(data: MessengerClick, request: Request):
+async def telegram_click(data: MessengerClick, request: Request, background_tasks: BackgroundTasks):
     """
     Логирует клик на Telegram, добавляет строку в Google Sheet и возвращает RedirectResponse на t.me?start=<id>
     """
@@ -146,26 +157,22 @@ async def telegram_click(data: MessengerClick, request: Request):
     logger.info("telegram_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
     values = _build_common_values(click_id, "telegram_click", data, ip, city, ua, ref)
-    success, result = append_row_to_sheets(values)
-    if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "telegram_click"})
-    else:
-        logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
+    background_tasks.add_task(append_row_bg, values, click_id, "telegram_click")
 
     BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME")
     if not BOT_USERNAME:
         logger.error("telegram_username_missing")
         return JSONResponse(status_code=500, content={"ok": False, "error": "TELEGRAM_BOT_USERNAME not set"})
 
-    deeplink = f"https://t.me/{BOT_USERNAME}?start={click_id}"
-    logger.info("telegram_link_built", extra={"click_id": click_id, "deeplink": deeplink})
+    tg_link = f"https://t.me/{BOT_USERNAME}?start={click_id}"
+    logger.info("telegram_link_built", extra={"click_id": click_id, "tg_link": tg_link})
 
-    return {"ok": True, "redirect_url": deeplink}
+    return {"ok": True, "tg_link": tg_link}
 
 
 # ========== 2) WhatsApp click endpoint (return wa.me link with prefilled text) ==========
 @app.post("/events/whatsapp_click")
-async def whatsapp_click(data: MessengerClick, request: Request):
+async def whatsapp_click(data: MessengerClick, request: Request, background_tasks: BackgroundTasks):
     """
     Логирует клик, сохраняет строку в таблицу и возвращает JSON с готовой ссылкой на WhatsApp.
     """
@@ -178,11 +185,7 @@ async def whatsapp_click(data: MessengerClick, request: Request):
     logger.info("whatsapp_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
     values = _build_common_values(click_id, "whatsapp_click", data, ip, city, ua, ref)
-    success, result = append_row_to_sheets(values)
-    if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "whatsapp_click"})
-    else:
-        logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
+    background_tasks.add_task(append_row_bg, values, click_id, "whatsapp_click")
 
     WHATSAPP_NUMBER = os.getenv("WHATSAPP_NUMBER")
     if not WHATSAPP_NUMBER:
@@ -213,11 +216,7 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
     logger.info("form_submit", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip, "form_name": data.form.name if data.form else None})
 
     values = _build_common_values(click_id, "form_submit", data, ip, city, ua, ref)
-    success, result = append_row_to_sheets(values)
-    if success:
-        logger.info("sheets_append_ok", extra={"click_id": click_id, "event": "form_submit"})
-    else:
-        logger.error("sheets_append_fail", extra={"click_id": click_id, "error": str(result)})
+    background_tasks.add_task(append_row_bg, values, click_id, "form_submit")
 
     if data.form:
         payload = build_planfix_payload(
@@ -228,7 +227,7 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
         background_tasks.add_task(send_to_planfix, payload)
         logger.info("planfix_enqueued", extra={"click_id": click_id, "form_name": data.form.name})
 
-    return {"ok": success}
+    return {"ok": True}
 
 
 # ========== 4) Endpoint для Planfix, который присылает текст с /start <id> ==========

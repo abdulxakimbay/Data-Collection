@@ -46,24 +46,73 @@ def _col_letter(idx_1_based: int) -> str:
     return s
 
 
-def append_row_to_sheets(values: list) -> Tuple[bool, object]:
+def get_sheet_id_by_name(sheet_name: str) -> Optional[int]:
     """
-    Аппенд строки строго с колонки A (A1 anchor).
-    Возвращает (True, result) или (False, error_str).
+    Возвращает внутренний numeric sheetId (gid) для листа с именем sheet_name.
+    None если не найдено или при ошибке.
     """
     try:
-        row = _pad_row(values, TOTAL_COLUMNS)
-        result = sheet.values().append(
-            spreadsheetId=SHEETS_ID,
-            range=f"{SHEET_NAME}!A1",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"majorDimension": "ROWS", "values": [row]},
-        ).execute()
-        logger.debug("sheets.append result: %s", result)
-        return True, result
+        resp = sheet.get(spreadsheetId=SHEETS_ID, fields="sheets.properties").execute()
+        sheets = resp.get("sheets", [])
+        for s in sheets:
+            props = s.get("properties", {})
+            if props.get("title") == sheet_name:
+                return props.get("sheetId")
+        logger.warning("get_sheet_id_by_name: sheet name not found: %s", sheet_name)
+        return None
     except Exception as e:
-        logger.exception("SHEETS ERROR append")
+        logger.exception("SHEETS ERROR get_sheet_id_by_name")
+        return None
+
+
+def append_row_to_sheets(values: list) -> Tuple[bool, object]:
+    """
+    Вставляет новую строку в начало листа (index 0) и записывает туда values.
+    Возвращает (True, result) или (False, error_str).
+
+    Реализация:
+    1) Получаем internal sheetId по имени листа.
+    2) Делаем batchUpdate с request 'insertDimension' (insert row at start).
+    3) Записываем значения в A1.
+    """
+    try:
+        sheet_id = get_sheet_id_by_name(SHEET_NAME)
+        if sheet_id is None:
+            err = f"Sheet id for '{SHEET_NAME}' not found"
+            logger.error("append_row_to_sheets: %s", err)
+            return False, err
+
+        # 1) Вставляем пустую строку в начало листа (startIndex=0, endIndex=1)
+        requests = [
+            {
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": 1,
+                        "endIndex": 2
+                    },
+                    "inheritFromBefore": False
+                }
+            }
+        ]
+        batch_body = {"requests": requests}
+        service.spreadsheets().batchUpdate(spreadsheetId=SHEETS_ID, body=batch_body).execute()
+
+        # 2) Записываем значения во вторую строку A2.. (обязательно pad до TOTAL_COLUMNS)
+        row = _pad_row(values, TOTAL_COLUMNS)
+        result = sheet.values().update(
+            spreadsheetId=SHEETS_ID,
+            range=f"{SHEET_NAME}!A2",
+            valueInputOption="RAW",
+            body={"values": [row]},
+        ).execute()
+
+        logger.debug("sheets.prepend result: %s", result)
+        return True, result
+
+    except Exception as e:
+        logger.exception("SHEETS ERROR prepend_row_to_sheets")
         return False, str(e)
 
 

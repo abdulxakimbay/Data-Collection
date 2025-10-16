@@ -11,6 +11,7 @@ class UTM(BaseModel):
 
 class ClientInfo(BaseModel):
     time_on_page_ms: Optional[int] = 0
+    referrer: Optional[str] = ""
 
 class FormData(BaseModel):
     name: str

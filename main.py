@@ -32,7 +32,7 @@ app = FastAPI(title="Data Collection API")
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins or ["*"],
+    allow_origins=[origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,8 +91,7 @@ def _build_common_values(
     data: Union[MessengerClick, FormSubmit],
     ip: str,
     city: str,
-    ua: str,
-    ref: str
+    ua: str
 ) -> list:
     """
     Универсальная сборка строки данных для Google Sheets.
@@ -110,6 +109,7 @@ def _build_common_values(
 
     client = getattr(data, "client", None)
     time_on_page = getattr(client, "time_on_page_ms", 0) if client else 0
+    ref = getattr(client, "referrer", "") if client else ""
 
     values = [
         click_id,          # A id
@@ -125,7 +125,7 @@ def _build_common_values(
         ip,                # K ip
         city,              # L geo_city
         ua,                # M user_agent
-        ref,               # N referer
+        ref,               # N referrer
         "",                # O messenger (заполняется позже ботом)
     ]
     return values
@@ -151,12 +151,11 @@ async def telegram_click(data: MessengerClick, request: Request, background_task
     ip = request.client.host
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
-    ref = request.headers.get("referer", "")
 
     click_id = make_click_id()
     logger.info("telegram_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
-    values = _build_common_values(click_id, "telegram_click", data, ip, city, ua, ref)
+    values = _build_common_values(click_id, "telegram_click", data, ip, city, ua)
     background_tasks.add_task(append_row_bg, values, click_id, "telegram_click")
 
     BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME")
@@ -179,12 +178,11 @@ async def whatsapp_click(data: MessengerClick, request: Request, background_task
     ip = request.client.host
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
-    ref = request.headers.get("referer", "")
 
     click_id = make_click_id()
     logger.info("whatsapp_click", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip})
 
-    values = _build_common_values(click_id, "whatsapp_click", data, ip, city, ua, ref)
+    values = _build_common_values(click_id, "whatsapp_click", data, ip, city, ua)
     background_tasks.add_task(append_row_bg, values, click_id, "whatsapp_click")
 
     WHATSAPP_NUMBER = os.getenv("WHATSAPP_NUMBER")
@@ -210,12 +208,11 @@ async def form_submit(data: FormSubmit, request: Request, background_tasks: Back
     ip = request.client.host
     city = get_city_by_ip(ip)
     ua = request.headers.get("user-agent", "")
-    ref = request.headers.get("referer", "")
 
     click_id = make_click_id()
     logger.info("form_submit", extra={"click_id": click_id, "page_city": data.page_city, "ip": ip, "form_name": data.form.name if data.form else None})
 
-    values = _build_common_values(click_id, "form_submit", data, ip, city, ua, ref)
+    values = _build_common_values(click_id, "form_submit", data, ip, city, ua)
     background_tasks.add_task(append_row_bg, values, click_id, "form_submit")
 
     if data.form:

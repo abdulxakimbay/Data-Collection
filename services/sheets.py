@@ -13,6 +13,7 @@ SHEETS_ID = os.getenv("SHEETS_ID")
 SHEET_NAME = os.getenv("SHEET_NAME")
 SERVICE_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 TOTAL_COLUMNS = int(os.getenv("SHEETS_TOTAL_COLUMNS", "15"))
+SHEET_GID = int(os.getenv("SHEET_GID", "0"))
 
 if not SHEETS_ID:
     raise RuntimeError("SHEETS_ID не задан")
@@ -46,58 +47,35 @@ def _col_letter(idx_1_based: int) -> str:
     return s
 
 
-def get_sheet_id_by_name(sheet_name: str) -> Optional[int]:
-    """
-    Возвращает внутренний numeric sheetId (gid) для листа с именем sheet_name.
-    None если не найдено или при ошибке.
-    """
-    try:
-        resp = sheet.get(spreadsheetId=SHEETS_ID, fields="sheets.properties").execute()
-        sheets = resp.get("sheets", [])
-        for s in sheets:
-            props = s.get("properties", {})
-            if props.get("title") == sheet_name:
-                return props.get("sheetId")
-        logger.warning("get_sheet_id_by_name: sheet name not found: %s", sheet_name)
-        return None
-    except Exception as e:
-        logger.exception("SHEETS ERROR get_sheet_id_by_name")
-        return None
-
-
 def append_row_to_sheets(values: list) -> Tuple[bool, object]:
     """
     Вставляет новую строку в начало листа (index 0) и записывает туда values.
     Возвращает (True, result) или (False, error_str).
 
     Реализация:
-    1) Получаем internal sheetId по имени листа.
-    2) Делаем batchUpdate с request 'insertDimension' (insert row at start).
-    3) Записываем значения в A1.
+    1) Используем numeric `SHEET_GID` из .env.
+    2) Делаем batchUpdate с request 'insertDimension' (insert row at start после заголовка).
+    3) Записываем значения в A2.. (обязательно pad до TOTAL_COLUMNS).
     """
     try:
-        sheet_id = get_sheet_id_by_name(SHEET_NAME)
-        if sheet_id is None:
-            err = f"Sheet id for '{SHEET_NAME}' not found"
-            logger.error("append_row_to_sheets: %s", err)
-            return False, err
-
-        # 1) Вставляем пустую строку в начало листа (startIndex=0, endIndex=1)
+        # 1) Вставляем пустую строку в начало (вторая строка, т.к. первая — заголовок)
         requests = [
             {
                 "insertDimension": {
                     "range": {
-                        "sheetId": sheet_id,
+                        "sheetId": SHEET_GID,
                         "dimension": "ROWS",
                         "startIndex": 1,
-                        "endIndex": 2
+                        "endIndex": 2,
                     },
-                    "inheritFromBefore": False
+                    "inheritFromBefore": False,
                 }
             }
         ]
         batch_body = {"requests": requests}
-        service.spreadsheets().batchUpdate(spreadsheetId=SHEETS_ID, body=batch_body).execute()
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEETS_ID, body=batch_body
+        ).execute()
 
         # 2) Записываем значения во вторую строку A2.. (обязательно pad до TOTAL_COLUMNS)
         row = _pad_row(values, TOTAL_COLUMNS)
@@ -112,7 +90,7 @@ def append_row_to_sheets(values: list) -> Tuple[bool, object]:
         return True, result
 
     except Exception as e:
-        logger.exception("SHEETS ERROR prepend_row_to_sheets")
+        logger.exception("SHEETS ERROR append_row_to_sheets")
         return False, str(e)
 
 
@@ -128,7 +106,7 @@ def find_row_by_id(record_id: str) -> Optional[int]:
             if row and len(row) >= 1 and row[0] == record_id:
                 return i
         return None
-    except Exception as e:
+    except Exception:
         logger.exception("SHEETS ERROR find_row_by_id")
         return None
 
@@ -163,6 +141,6 @@ def update_messenger_by_id(record_id: str, messenger: str) -> Tuple[bool, object
             return False, "ID not found"
         # колонка O = 15 (1-based)
         return update_cell(row, 15, messenger)
-    except Exception as e:
+    except Exception:
         logger.exception("SHEETS ERROR update_messenger_by_id")
-        return False, str(e)
+        return False, "internal error"

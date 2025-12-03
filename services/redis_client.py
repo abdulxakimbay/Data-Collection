@@ -6,8 +6,8 @@ from typing import Optional
 
 try:
     import redis  # type: ignore
-except Exception as e:  # pragma: no cover
-    redis = None  # позволит корректно отработать фолбэк, если пакет не установлен
+except Exception as e:
+    redis = None
 
 # Глобальный клиент Redis; инициализируется через init_redis()
 _redis_client: Optional["redis.Redis"] = None # type: ignore
@@ -67,5 +67,5 @@ def get_next_click_id(strict: bool = False) -> str:
     if strict:
         raise RuntimeError("Redis is not available for click_id generation")
 
-    # Мягкий фолбэк — как и раньше: 12-символьный hex.
+    # Мягкий фолбэк
     return uuid.uuid4().hex[:12]

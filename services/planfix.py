@@ -27,7 +27,6 @@ def build_planfix_payload(name: str, phone: str, page_city: str) -> Dict:
 async def send_to_planfix(payload: Dict):
     """
     Отправляем POST запрос в Planfix с ретраями.
-    Просто логируем результат — функция не бросает исключения наружу.
     """
     if not PLANFIX_WEBHOOK_URL:
         logger.info("PLANFIX_WEBHOOK_URL not set — skipping send_to_planfix")

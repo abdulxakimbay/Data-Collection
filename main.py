@@ -39,7 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Redis init (до GeoIP/эндпоинтов, чтобы сразу быть готовыми)
+# Redis init
 init_redis(logger=logger)
 
 # GeoIP
@@ -70,7 +70,7 @@ def health_check():
     logger.debug("health_check")
     return {"status": "ok"}
 
-# ========== Поиск click_id в тексте (теперь — integer) ==========
+# ========== Поиск click_id в тексте ==========
 # Ищем целое число длиной >= 4 символов (наш ID начиная с 1000),
 # Берём ПОСЛЕДНЕЕ совпадение в строке — мы добавляем ID в конец prefill.
 INT_CLICK_ID_RE = re.compile(r'\b(\d{4,7})\b')
@@ -95,7 +95,6 @@ def _build_common_values(
     Универсальная сборка строки данных для Google Sheets.
     """
     timestamp = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
-    # Безопасное извлечение полей
     page_city = getattr(data, "page_city", "") or ""
     utm = getattr(data, "utm", None)
     utm_source = getattr(utm, "source", "") if utm else ""

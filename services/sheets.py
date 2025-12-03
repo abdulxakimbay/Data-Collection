@@ -97,7 +97,6 @@ def append_row_to_sheets(values: list) -> Tuple[bool, object]:
 def find_row_by_id(record_id: str) -> Optional[int]:
     """
     Возвращает 1-based номер строки, где в кол. A равен record_id. None если не нашли.
-    Пробегаем колонку A целиком (внимание: если таблица очень большая — может быть медленно).
     """
     try:
         res = sheet.values().get(spreadsheetId=SHEETS_ID, range=f"{SHEET_NAME}!A:A").execute()
